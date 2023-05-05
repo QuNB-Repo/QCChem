@@ -4,6 +4,12 @@
 # In[2]:
 
 
+# qiskit version: {'qiskit-terra': '0.19.1', 'qiskit-aer': '0.10.2', 'qiskit-ignis': '0.7.0',
+#'qiskit-ibmq-provider': '0.18.3', 'qiskit-aqua': '0.9.5', 'qiskit': '0.34.1', 'qiskit-nature': '0.3.0', 
+                #'qiskit-finance': '0.3.0', 'qiskit-optimization': None, 'qiskit-machine-learning': '0.3.0'}
+        
+#==============================================================================================================
+
 import numpy as np
 from qiskit import Aer
 from qiskit_nature.drivers import UnitsType, Molecule
