@@ -1,1 +1,53 @@
+from qiskit import Aer
+from qiskit.opflow import X, Z, I
+from qiskit.utils import QuantumInstance, algorithm_globals
+from qiskit.algorithms import VQE
+from qiskit.algorithms.optimizers import SLSQP, SPSA
+from qiskit.circuit.library import TwoLocal
+import numpy as np
+
+
+ecc = []
+for a in np.arange(0,1.01,0.01, dtype=object):
+    b = 1-a
+    op = a*((X ^I ^ I ^ I)+(I ^X ^ I ^ I) +(I ^I ^ X ^ I)+ (I ^I ^ I ^ X))+ b*((Z^Z^I^I)+(I^Z^Z^I) + (I^I^Z^Z)+(Z^I^I^Z))
+    seed = 50
+    algorithm_globals.random_seed = seed
+    qi = QuantumInstance(Aer.get_backend('statevector_simulator'), seed_transpiler=seed, seed_simulator=seed)
+
+    layer_1 = [(0, 1), (2, 3)]
+    layer_2 = [(0, 3),(1,2)]
+    from qiskit.circuit.library import TwoLocal
+    num_qubits = 4
+
+    ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1, layer_2]
+                      , reps=4,insert_barriers=True)
+
+    slsqp = SLSQP(maxiter=200)
+    vqe = VQE(ansatz, optimizer=slsqp, quantum_instance=qi)
+    result = vqe.compute_minimum_eigenvalue(operator=op)
+    #print(result)
+    optimizer_evals = result.optimizer_evals
+    print("a:",a)
+    print(">")
+    print("REsult:", result)
+    print("")
+    print("======================================***=============================================")
+    ecc.append(result.eigenvalue.real)
+print("cluster= ",ecc)
+from qiskit.algorithms import NumPyEigensolver
+from qiskit.opflow import I, X, Z
+
+exact=[]
+for a in np.arange(0,1.01,0.01, dtype=object):
+    b = 1-a
+    c=9999
+    op = a*((X ^I ^ I ^ I)+(I ^X ^ I ^ I) +(I ^I ^ X ^ I)+ (I ^I ^ I ^ X))+ b*((Z^Z^I^I)+(I^Z^Z^I) + (I^I^Z^Z)+(Z^I^I^Z))
+    npe = NumPyEigensolver(k=16)
+    result = npe.compute_eigenvalues(op)
+    num_qubits = 4
+    #print(op.to_matrix().real)
+    target_energy =min(result.eigenvalues)
+    exact.append(target_energy.real)
+    
 
