@@ -117,6 +117,9 @@ for a in np.arange(0.4,3.5,0.1, dtype=object):
     ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2]
                       , reps=5,insert_barriers=True, parameter_prefix = 'theta')
     
+    
+     # change the " reps=5 " in the "ansatz" to 6 or 8
+    
   
     
     
