@@ -3,6 +3,11 @@
 
 # In[5]:
 
+# qiskit version: {'qiskit-terra': '0.19.1', 'qiskit-aer': '0.10.2', 'qiskit-ignis': '0.7.0',
+#'qiskit-ibmq-provider': '0.18.3', 'qiskit-aqua': '0.9.5', 'qiskit': '0.34.1', 'qiskit-nature': '0.3.0', 
+                #'qiskit-finance': '0.3.0', 'qiskit-optimization': None, 'qiskit-machine-learning': '0.3.0'}
+        
+#==============================================================================================================
 
 from qiskit import Aer
 from qiskit.opflow import X, Z, I
@@ -53,7 +58,18 @@ print("The circuit depth is:", ansatz.decompose().depth())
 
 
 # In[ ]:
-
-
+#===========================================================================================================
+# exact energy
+ar1=[]
+for a in np.arange(0,1.01,0.01, dtype=object):
+    b = 1-a
+    c=9999
+    op = a*((X ^I ^ I ^ I ^ I ^ I)+(I ^X ^ I ^ I ^ I ^ I) +(I ^I ^ X ^ I ^ I ^ I)+ (I ^I ^ I ^ X^ I ^ I)+(I ^I ^ I ^ I^ X ^ I)+(I ^I ^ I ^ I^ I ^ X))+ b*((Z^Z^I^I^I^I)+(I^Z^Z^I^I^I) + (I^I^Z^Z^I^I)+(I^I^I^Z^Z^I)+(I^I^I^I^Z^Z)+(Z^I^I^I^I^Z))
+    npe = NumPyEigensolver(k=1)
+    result = npe.compute_eigenvalues(op)
+    num_qubits = 6
+    #print(op.to_matrix().real)
+    target_energy =min(result.eigenvalues)
+    ar1.append(target_energy)
 
 
