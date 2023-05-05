@@ -31,7 +31,7 @@ for a in np.arange(0,1.01,0.01, dtype=object):
     ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2]
                       , reps=6,insert_barriers=True, parameter_prefix = 'theta')
     
-    
+    # change the " reps=6 " in the "ansatz" to other values!!!
     
     slsqp = SLSQP(maxiter=200)
     vqe = VQE(ansatz, optimizer=slsqp, quantum_instance=qi)
