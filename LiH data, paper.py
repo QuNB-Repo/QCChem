@@ -4,6 +4,14 @@
 # In[3]:
 
 
+# qiskit version: {'qiskit-terra': '0.19.1', 'qiskit-aer': '0.10.2', 'qiskit-ignis': '0.7.0',
+#'qiskit-ibmq-provider': '0.18.3', 'qiskit-aqua': '0.9.5', 'qiskit': '0.34.1', 'qiskit-nature': '0.3.0', 
+                #'qiskit-finance': '0.3.0', 'qiskit-optimization': None, 'qiskit-machine-learning': '0.3.0'}
+        
+#==============================================================================================================
+
+
+
 from qiskit_nature.settings import settings
 settings.dict_aux_operators = True
 from qiskit import*
@@ -116,7 +124,7 @@ for a in np.arange(1,3.1,0.1, dtype=object):
     ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2]
                       , reps=5,insert_barriers=True, parameter_prefix = 'theta')
     
-  
+   # change the " reps=5 " in the "ansatz" to 6 or 8 or...
     
     
     
