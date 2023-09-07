@@ -26,8 +26,8 @@ from qiskit_nature.converters.second_quantization import QubitConverter
 from qiskit_nature.mappers.second_quantization import JordanWignerMapper, ParityMapper, BravyiKitaevMapper
 
 
-enrgy=[]
-pa2=[]
+energy=[]
+pa=[]
 spin=[]
 b=0.735
 for a in np.arange(0.4,2.1,0.1, dtype=object):
@@ -88,9 +88,9 @@ for a in np.arange(0.4,2.1,0.1, dtype=object):
     print("")
     #print("absolute tolerance= ",  res.ABSOLUTE_TOLERANCE )
     print("=======================***************============================")
-    enrgy2.append(res.total_energies[0].real)
-    par2.append(res.num_particles)
-    spin2.append(res.spin)
+    energy.append(res.total_energies[0].real)
+    par.append(res.num_particles)
+    spin.append(res.spin)
     
       
     
