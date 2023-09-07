@@ -115,7 +115,7 @@ for a in np.arange(0.4,3.5,0.1, dtype=object):
     layer_2 = [(0, 3),(1,2),(4,5)]
     layer_3 = [(0, 1),(2,5),(3,4)]
     
-    ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2]
+    ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2,layer_3]
                       , reps=5,insert_barriers=True, parameter_prefix = 'theta')
     
     
