@@ -113,3 +113,54 @@ print("=======================***************============================")
 print("spin"  ,spin)
 
 
+
+#====================================================================================================
+#exact
+from qiskit_nature.settings import settings
+settings.dict_aux_operators = True
+import numpy as np
+
+b=0.735
+
+exact=[]
+for a in np.arange(0.4,2.1,0.1, dtype=object):
+    from qiskit import Aer
+    from qiskit_nature.drivers import UnitsType, Molecule
+    from qiskit_nature.drivers.second_quantization import (
+    ElectronicStructureDriverType,
+    ElectronicStructureMoleculeDriver,
+    )
+    from qiskit_nature.problems.second_quantization import ElectronicStructureProblem
+    from qiskit_nature.converters.second_quantization import QubitConverter
+    from qiskit_nature.mappers.second_quantization import JordanWignerMapper
+    molecule = Molecule(
+        geometry=[["H", [0.0, 0.0, 0.0]], ["H", [a,0.0, 0]], ["H", [0.0, b, 0]],["H", [a, b, 0.0]]], charge=0, multiplicity=1
+    )
+    driver = ElectronicStructureMoleculeDriver(
+        molecule, basis="sto3g", driver_type=ElectronicStructureDriverType.PYQUANTE
+    )
+
+    es_problem = ElectronicStructureProblem(driver)
+    qubit_converter = QubitConverter(JordanWignerMapper())
+
+###################
+    from qiskit_nature.algorithms import GroundStateEigensolver
+    from qiskit.algorithms import NumPyMinimumEigensolver
+
+    numpy_solver = NumPyMinimumEigensolver()
+
+
+#################
+
+
+    calc = GroundStateEigensolver(qubit_converter, numpy_solver)
+    res = calc.solve(es_problem)
+    #print("a:",a)
+    #print("")
+    #print(res)
+    #print("")
+    #print("Total ground state energy=",res.total_energies)
+    #print("")
+    #print("=======================***************============================")
+    exact.append(res.total_energies)
+
