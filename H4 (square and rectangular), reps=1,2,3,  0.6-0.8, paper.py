@@ -104,12 +104,12 @@ ansatz.decompose().draw(output = 'mpl')
 # In[2]:
 
 
-print("energy= ", enrgy2)
+print("energy= ", energy)
 print("")
 print("=======================***************============================")
-print("particle number"  ,par2)
+print("particle number"  ,par)
 print("")
 print("=======================***************============================")
-print("spin"  ,spin2)
+print("spin"  ,spin)
 
 
