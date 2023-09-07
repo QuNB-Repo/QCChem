@@ -37,7 +37,7 @@ for a in np.arange(1,3.1,0.1, dtype=object):
     )
 
     es_problem = ElectronicStructureProblem(driver,[FreezeCoreTransformer(freeze_core=True,
-                               remove_orbitals=[-3,-2])])
+                               remove_orbitals=[-3,-2)])
     qubit_converter =  QubitConverter(ParityMapper(), z2symmetry_reduction="auto")
 
 ###################
