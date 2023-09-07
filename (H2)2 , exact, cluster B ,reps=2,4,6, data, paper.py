@@ -83,9 +83,9 @@ from qiskit_nature.converters.second_quantization import QubitConverter
 from qiskit_nature.mappers.second_quantization import JordanWignerMapper, ParityMapper, BravyiKitaevMapper
 
 
-enrgy5=[]
-par5=[]
-spin5=[]
+energy=[]
+par=[]
+spin=[]
 
 for a in np.arange(0.4,2.7,0.1, dtype=object):
     b=3-a
@@ -122,9 +122,9 @@ for a in np.arange(0.4,2.7,0.1, dtype=object):
     
     
     ansatz=TwoLocal(num_qubits, 'ry', 'cx',[layer_1,layer_2]
-                      , reps=5,insert_barriers=True, parameter_prefix = 'theta')
+                      , reps=2,insert_barriers=True, parameter_prefix = 'theta')
     
-  
+      # you can change the " reps=2 " in the "ansatz" to 4,6
     
     
     
@@ -147,9 +147,9 @@ for a in np.arange(0.4,2.7,0.1, dtype=object):
     print("")
     #print("absolute tolerance= ",  res.ABSOLUTE_TOLERANCE )
     print("=======================***************============================")
-    enrgy5.append(res.total_energies[0].real)
-    par5.append(res.num_particles)
-    spin5.append(res.spin)
+    energy.append(res.total_energies[0].real)
+    par.append(res.num_particles)
+    spin.append(res.spin)
         
 print("The circuit depth is:", ansatz.decompose().depth())
 display(ansatz.decompose().draw(output = 'mpl'))
@@ -158,13 +158,13 @@ display(ansatz.decompose().draw(output = 'mpl'))
 # In[11]:
 
 
-print("energy= ", enrgy5)
+print("energy= ", energy)
 print("")
 print("=======================***************============================")
-print("particle number"  ,par5)
+print("particle number"  ,par)
 print("")
 print("=======================***************============================")
-print("spin"  ,spin5)
+print("spin"  ,spin)
 
 
 # In[ ]:
