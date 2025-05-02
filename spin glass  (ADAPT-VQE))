@@ -1,0 +1,675 @@
+# sample for the house Ising model
+
+import numpy as np
+from scipy.linalg import eigh, expm
+from scipy.optimize import minimize
+from qiskit import*
+from qiskit import QuantumCircuit
+from IPython.display import display
+import time
+# Pauli matrices
+I_matrix = np.array([[1, 0],
+                     [0, 1]], dtype=complex)
+X_matrix = np.array([[0, 1],
+                     [1, 0]], dtype=complex)
+Y_matrix = np.array([[0, -1j],
+                     [1j, 0]], dtype=complex)
+Z_matrix = np.array([[1, 0],
+                     [0,-1]], dtype=complex)
+
+def tensor_product(*ops):
+    result = np.array([[1]], dtype=complex)
+    for op in ops:
+        result = np.kron(result, op)
+    return result
+
+def build_hamiltonian_matrix(weighted_edge_list, n_qubits, coeff_zz=1.0, coeff_x=1.0):
+    hamiltonian = np.zeros((2**n_qubits, 2**n_qubits), dtype=complex)
+    # ZZ terms
+    for (i, j, weight) in weighted_edge_list:
+        zz_term = coeff_zz * weight * tensor_product(*[Z_matrix if (k==i or k==j) else I_matrix for k in range(n_qubits)])
+        hamiltonian += zz_term
+    # X terms
+    for i in range(n_qubits):
+        x_term = coeff_x * tensor_product(*[X_matrix if k==i else I_matrix for k in range(n_qubits)])
+        hamiltonian += x_term
+    return hamiltonian
+
+def initial_state(n_qubits):
+    state = np.zeros(2**n_qubits, dtype=complex)
+    state[0] = 1.0
+    return state
+
+def apply_unitary(state, operator, theta):
+    U = expm(-1j * theta * operator)
+    return U @ state
+
+def energy_expectation(state, hamiltonian):
+    return np.real(np.vdot(state, hamiltonian @ state))
+
+def vqe_optimization(thetas, operators, initial, hamiltonian):
+    state = initial
+    for theta, op in zip(thetas, operators):
+        state = apply_unitary(state, op, theta)
+    return energy_expectation(state, hamiltonian)
+
+def finite_difference_gradient(state, hamiltonian, operator, delta=1e-4):
+    state_plus = apply_unitary(state, operator, +delta)
+    E_plus = energy_expectation(state_plus, hamiltonian)
+
+    state_minus = apply_unitary(state, operator, -delta)
+    E_minus = energy_expectation(state_minus, hamiltonian)
+
+    return (E_plus - E_minus) / (2 * delta)
+
+def perform_vqe_optimization(selected_ops, hamiltonian, n_qubits, initial_thetas=None):
+    if initial_thetas is None:
+        initial_thetas = [np.random.uniform(-np.pi, np.pi) for _ in selected_ops]
+
+    initial_thetas = np.array(initial_thetas, dtype=float)  # Ensure NumPy array
+    result = minimize(
+        vqe_optimization,
+        initial_thetas,
+        args=([o for o in selected_ops], initial_state(n_qubits), hamiltonian),
+        method='SLSQP',
+        options={'maxiter':1000, 'ftol':1e-12}
+    )
+    return result.x
+
+def build_operator_pool(weighted_edge_list, n_qubits):
+    paulis = ['X','Y','Z']
+    single_qubit_ops = []
+    for i in range(n_qubits):
+        single_qubit_ops.append((tensor_product(*[X_matrix if k==i else I_matrix for k in range(n_qubits)]), (i, 'X')))
+        single_qubit_ops.append((tensor_product(*[Y_matrix if k==i else I_matrix for k in range(n_qubits)]), (i, 'Y')))
+        single_qubit_ops.append((tensor_product(*[Z_matrix if k==i else I_matrix for k in range(n_qubits)]), (i, 'Z')))
+
+    two_qubit_ops = []
+    for (u, v, _) in weighted_edge_list:
+        i, j = (u, v) if u < v else (v, u)
+        for A in paulis:
+            for B in paulis:
+                op = []
+                for k in range(n_qubits):
+                    if k == i:
+                        op.append(X_matrix if A=='X' else Y_matrix if A=='Y' else Z_matrix)
+                    elif k == j:
+                        op.append(X_matrix if B=='X' else Y_matrix if B=='Y' else Z_matrix)
+                    else:
+                        op.append(I_matrix)
+                two_qubit_ops.append((tensor_product(*op), (i, j, A+B)))
+    return single_qubit_ops, two_qubit_ops
+
+def filter_operators_by_gradient(state, hamiltonian, operators, gradient_threshold=1e-5, delta=1e-4):
+    filtered_ops = []
+    for op, idx in operators:
+        g = finite_difference_gradient(state, hamiltonian, op, delta=delta)
+        if abs(g) > gradient_threshold:
+            filtered_ops.append((op, idx, g))
+    return filtered_ops
+
+def forward_transform(qc, qubit, p):
+    if p == 'X':
+        qc.h(qubit)
+    elif p == 'Y':
+        qc.sdg(qubit)
+        qc.h(qubit)
+
+def backward_transform(qc, qubit, p):
+    if p == 'X':
+        qc.h(qubit)
+    elif p == 'Y':
+        qc.h(qubit)
+        qc.s(qubit)
+
+def apply_two_qubit_rotation(qc, A, B, i, j, theta):
+    forward_transform(qc, i, A)
+    forward_transform(qc, j, B)
+    qc.cx(i, j)
+    qc.rz(2*theta, j)
+    qc.cx(i, j)
+    backward_transform(qc, j, B)
+    backward_transform(qc, i, A)
+
+def build_circuit(qc, ops_info, thetas):
+    # Build circuit from ops and thetas
+    for theta, op_info in zip(thetas, ops_info):
+        if len(op_info) == 2:
+            q, P = op_info
+            if P == 'X':
+                qc.rx(2*theta, q)
+            elif P == 'Y':
+                qc.ry(2*theta, q)
+            elif P == 'Z':
+                qc.rz(2*theta, q)
+        elif len(op_info) == 3:
+            i, j, AB = op_info
+            A, B = AB[0], AB[1]
+            apply_two_qubit_rotation(qc, A, B, i, j, theta)
+
+def state_from_ops_thetas(ops, thetas, n_qubits):
+    st = initial_state(n_qubits)
+    for theta, op in zip(thetas, ops):
+        st = apply_unitary(st, op, theta)
+    return st
+
+def run_vqe_with_iterations(weighted_edge_list, n_qubits, coeff_zz, coeff_x, gradient_threshold=1e-5, convergence_tol=1e-7):
+    start_time = time.time()
+    hamiltonian = build_hamiltonian_matrix(weighted_edge_list, n_qubits, coeff_zz, coeff_x)
+    eigenvalues, eigenvectors = eigh(hamiltonian)
+    exact_ground_state_energy = np.min(eigenvalues)
+    exact_ground_state = eigenvectors[:, np.argmin(eigenvalues)]
+
+    single_qubit_ops, two_qubit_ops = build_operator_pool(weighted_edge_list, n_qubits)
+
+    # Start with empty ansatz
+    combined_ops = []
+    combined_info = []
+    combined_thetas = np.array([], dtype=float)
+
+    prev_energy = np.inf
+    iteration = 0
+
+    while True:
+        iteration += 1
+        print(f"\n--- Iteration {iteration} ---")
+
+        # Compute current state
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+
+        # Step 1: Select and add two-qubit operators
+        selected_two_qubit = filter_operators_by_gradient(state, hamiltonian, two_qubit_ops, gradient_threshold=gradient_threshold)
+        if len(selected_two_qubit) > 0:
+            print("Selected two-qubit operators:")
+            for (op, idx, g) in selected_two_qubit:
+                print(f"  Operator {idx}, gradient: {g:.6f}")
+
+            selected_two_qubit_ops = [op for (op, idx, g) in selected_two_qubit]
+            selected_two_qubit_info = [idx for (op, idx, g) in selected_two_qubit]
+            combined_ops.extend(selected_two_qubit_ops)
+            combined_info.extend(selected_two_qubit_info)
+
+            new_angles = np.array([np.random.uniform(-np.pi, np.pi) for _ in selected_two_qubit_ops], dtype=float)
+            if combined_thetas.size == 0:
+                initial_thetas = new_angles
+            else:
+                initial_thetas = np.concatenate([combined_thetas, new_angles])
+
+            combined_thetas = perform_vqe_optimization(combined_ops, hamiltonian, n_qubits, initial_thetas)
+
+            state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+            energy = energy_expectation(state, hamiltonian)
+            fidelity = abs(np.vdot(state, exact_ground_state))**2
+            print(f"After two-qubit selection optimization:")
+            print(f"Energy: {energy:.5f}, Fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+        else:
+            print("No two-qubit operators above threshold this iteration.")
+
+        # Step 2: Select and add single-qubit operators
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+        selected_single_qubit = filter_operators_by_gradient(state, hamiltonian, single_qubit_ops, gradient_threshold=gradient_threshold)
+        if len(selected_single_qubit) > 0:
+            print("Selected single-qubit operators:")
+            for (op, idx, g) in selected_single_qubit:
+                print(f"  Operator {idx}, gradient: {g:.6f}")
+
+            selected_single_qubit_ops = [op for (op, idx, g) in selected_single_qubit]
+            selected_single_qubit_info = [idx for (op, idx, g) in selected_single_qubit]
+            combined_ops.extend(selected_single_qubit_ops)
+            combined_info.extend(selected_single_qubit_info)
+
+            new_angles = np.array([np.random.uniform(-np.pi, np.pi) for _ in selected_single_qubit_ops], dtype=float)
+            if combined_thetas.size == 0:
+                initial_thetas = new_angles
+            else:
+                initial_thetas = np.concatenate([combined_thetas, new_angles])
+
+            combined_thetas = perform_vqe_optimization(combined_ops, hamiltonian, n_qubits, initial_thetas)
+
+            state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+            energy = energy_expectation(state, hamiltonian)
+            fidelity = abs(np.vdot(state, exact_ground_state))**2
+            print(f"After single-qubit selection optimization:")
+            print(f"Energy: {energy:.5f}, Fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+        else:
+            print("No single-qubit operators above threshold this iteration.")
+
+        # Step 3: Final refinement
+        combined_thetas = perform_vqe_optimization(combined_ops, hamiltonian, n_qubits, combined_thetas)
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+        energy = energy_expectation(state, hamiltonian)
+        fidelity = abs(np.vdot(state, exact_ground_state))**2
+        print("Final optimization with all selected operators:")
+        print(f"Energy: {energy:.5f}, Fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+
+        qc = QuantumCircuit(n_qubits)
+        build_circuit(qc, combined_info, combined_thetas)
+        display(qc.draw('mpl'))
+        anstaz = transpile(qc, basis_gates=['u', 'cx'])
+        print("Transpile Depth =", anstaz.depth())
+        print(anstaz.count_ops())
+        print("\n============********===============")
+
+        # Check convergence
+        if abs(energy - prev_energy) < convergence_tol:
+            print(f"Converged at iteration {iteration}, energy: {energy:.5f}")
+            break
+
+        # If no operators were added this iteration, no improvement
+        if len(selected_two_qubit) == 0 and len(selected_single_qubit) == 0:
+            print("No new operators added and no improvement, stopping.")
+            break
+
+        prev_energy = energy
+    end_time = time.time()
+    print(f"Total running time: {end_time - start_time:.4f} seconds")
+# Example usage
+coeff_zz = float(input("Enter coefficient for ZZ terms: "))
+coeff_x = float(input("Enter coefficient for X terms: "))
+
+weighted_edge_list = [
+    (0, 1, 1), (0, 2, 1),
+    (2, 4, 1), (2, 3, 1),
+    (1, 3, 1), (3, 4, 1)
+]
+n_qubits = 5
+# Now we set a convergence tolerance, for example 1e-7:
+run_vqe_with_iterations(weighted_edge_list, n_qubits, coeff_zz, coeff_x, gradient_threshold=1e-5, convergence_tol=1e-6)
+
+
+
+
+############# GPU based approch ########################
+#sample 10-site
+
+from qiskit import QuantumCircuit,transpile
+import numpy as np
+try:
+    import cupy as cp  # GPU-accelerated NumPy
+    use_gpu = True
+except ImportError:
+    print("CuPy not installed. Falling back to NumPy.")
+    cp = np  # Fallback to NumPy
+    use_gpu = False
+
+from scipy.linalg import eigh, expm
+from scipy.optimize import minimize
+from qiskit import QuantumCircuit
+from IPython.display import display
+import time
+
+# Pauli matrices
+I_matrix = cp.array([[1, 0],
+                     [0, 1]], dtype=complex)
+X_matrix = cp.array([[0, 1],
+                     [1, 0]], dtype=complex)
+Y_matrix = cp.array([[0, -1j],
+                     [1j, 0]], dtype=complex)
+Z_matrix = cp.array([[1, 0],
+                     [0, -1]], dtype=complex)
+
+def tensor_product(*ops):
+    result = cp.array([[1]], dtype=complex)
+    for op in ops:
+        result = cp.kron(result, op)
+    return result
+
+def build_hamiltonian_matrix(weighted_edge_list, n_qubits, coeff_zz=1.0, coeff_x=1.0):
+    hamiltonian = cp.zeros((2**n_qubits, 2**n_qubits), dtype=complex)
+    # ZZ terms
+    for (i, j, weight) in weighted_edge_list:
+        zz_term = coeff_zz * weight * tensor_product(*[Z_matrix if (k == i or k == j) else I_matrix for k in range(n_qubits)])
+        hamiltonian += zz_term
+    # X terms
+    for i in range(n_qubits):
+        x_term = coeff_x * tensor_product(*[X_matrix if k == i else I_matrix for k in range(n_qubits)])
+        hamiltonian += x_term
+    return hamiltonian
+
+def initial_state(n_qubits):
+    state = cp.zeros(2**n_qubits, dtype=complex)
+    state[0] = 1.0
+    return state
+
+def apply_unitary(state, operator, theta):
+    # Ensure `theta` is a scalar that NumPy and CuPy can handle
+    theta = float(theta)  # Convert to Python float for safety
+    # Ensure operator is passed as a NumPy array to `expm`
+    operator_np = cp.asnumpy(operator)
+    # Compute the unitary matrix using NumPy
+    U = expm(-1j * theta * operator_np)
+    # Convert the unitary back to a CuPy array for GPU computation
+    U_gpu = cp.array(U, dtype=complex)
+    # Apply the unitary to the state vector
+    return U_gpu @ state
+
+
+def energy_expectation(state, hamiltonian):
+    return cp.real(cp.vdot(state, hamiltonian @ state))
+
+def vqe_optimization(thetas, operators, initial, hamiltonian):
+    state = initial
+    for theta, op in zip(thetas, operators):
+        state = apply_unitary(state, op, theta)
+    energy = energy_expectation(state, hamiltonian)
+    return float(cp.asnumpy(energy))  # Convert to scalar
+
+
+def finite_difference_gradient(state, hamiltonian, operator, delta=1e-4):
+    state_plus = apply_unitary(state, operator, +delta)
+    E_plus = energy_expectation(state_plus, hamiltonian)
+
+    state_minus = apply_unitary(state, operator, -delta)
+    E_minus = energy_expectation(state_minus, hamiltonian)
+
+    return (E_plus - E_minus) / (2 * delta)
+
+import torch
+import numpy as np
+
+import torch
+import numpy as np
+
+def vqe_loss(thetas, selected_ops, hamiltonian, n_qubits, device="cuda"):
+    """
+    Computes the VQE loss (energy expectation value).
+    """
+    # Initialize |0...0> state
+    state = torch.zeros(2**n_qubits, dtype=torch.complex64, device=device)
+    state[0] = 1.0  
+
+    # Apply the unitary operators sequentially
+    for theta, op in zip(thetas, selected_ops):
+        operator_torch = torch.as_tensor(op, dtype=torch.complex64, device=device)
+        U = torch.matrix_exp(-1j * theta * operator_torch)
+        state = torch.matmul(U, state)
+
+    # Compute energy expectation value
+    hamiltonian_torch = torch.as_tensor(hamiltonian, dtype=torch.complex64, device=device)
+    energy = torch.real(torch.vdot(state, torch.matmul(hamiltonian_torch, state)))
+    return energy
+
+def perform_gpu_optimization(selected_ops, hamiltonian, n_qubits, 
+                                    initial_thetas=None, pretrain_steps=100, 
+                                    adam_lr=0.01, lbfgs_lr=0.1, max_lbfgs_iter=50, 
+                                    device="cuda"):
+    """
+    Hybrid optimization: Pre-train with Adam, then fine-tune with LBFGS.
+    """
+    if initial_thetas is None:
+        initial_thetas = np.random.uniform(-np.pi, np.pi, len(selected_ops))
+
+    # Initialize parameters
+    thetas = torch.tensor(initial_thetas, requires_grad=True, dtype=torch.float32, device=device)
+
+    # Step 1: Pre-train with Adam
+    print("Starting Adam pre-training...")
+    optimizer_adam = torch.optim.Adam([thetas], lr=adam_lr)
+
+    for step in range(pretrain_steps):
+        optimizer_adam.zero_grad()
+        loss = vqe_loss(thetas, selected_ops, hamiltonian, n_qubits, device=device)
+        loss.backward()
+        optimizer_adam.step()
+
+        if step % 10 == 0:
+            print(f"Adam Step {step + 1}, Loss: {loss.item()}")
+
+    # Step 2: Fine-tune with LBFGS
+    print("Switching to LBFGS fine-tuning...")
+    optimizer_lbfgs = torch.optim.LBFGS([thetas], lr=lbfgs_lr, history_size=10, max_iter=20)
+
+    # Define the closure for LBFGS
+    def closure():
+        optimizer_lbfgs.zero_grad()
+        loss = vqe_loss(thetas, selected_ops, hamiltonian, n_qubits, device=device)
+        loss.backward()
+        return loss
+
+    for step in range(max_lbfgs_iter):
+        loss = optimizer_lbfgs.step(closure)
+
+        if step % 5 == 0:
+            print(f"LBFGS Step {step + 1}, Loss: {loss.item()}")
+
+        # Convergence check
+        if torch.norm(thetas.grad) < 1e-5:
+            print(f"Converged at LBFGS step {step + 1} with Loss: {loss.item()}")
+            break
+
+    return thetas.detach().cpu().numpy()
+
+
+def build_operator_pool(weighted_edge_list, n_qubits):
+    paulis = ['X', 'Y', 'Z']
+    single_qubit_ops = []
+    for i in range(n_qubits):
+        single_qubit_ops.append((tensor_product(*[X_matrix if k == i else I_matrix for k in range(n_qubits)]), (i, 'X')))
+        single_qubit_ops.append((tensor_product(*[Y_matrix if k == i else I_matrix for k in range(n_qubits)]), (i, 'Y')))
+        single_qubit_ops.append((tensor_product(*[Z_matrix if k == i else I_matrix for k in range(n_qubits)]), (i, 'Z')))
+
+    two_qubit_ops = []
+    for (u, v, _) in weighted_edge_list:
+        i, j = (u, v) if u < v else (v, u)
+        for A in paulis:
+            for B in paulis:
+                op = []
+                for k in range(n_qubits):
+                    if k == i:
+                        op.append(X_matrix if A == 'X' else Y_matrix if A == 'Y' else Z_matrix)
+                    elif k == j:
+                        op.append(X_matrix if B == 'X' else Y_matrix if B == 'Y' else Z_matrix)
+                    else:
+                        op.append(I_matrix)
+                two_qubit_ops.append((tensor_product(*op), (i, j, A+B)))
+    return single_qubit_ops, two_qubit_ops
+
+def filter_operators_by_gradient(state, hamiltonian, operators, gradient_threshold=1e-5, delta=1e-4):
+    filtered_ops = []
+    for op, idx in operators:
+        g = finite_difference_gradient(state, hamiltonian, op, delta=delta)
+        if abs(g) > gradient_threshold:
+            filtered_ops.append((op, idx, g))
+    return filtered_ops
+
+def forward_transform(qc, qubit, p):
+    if p == 'X':
+        qc.h(qubit)
+    elif p == 'Y':
+        qc.sdg(qubit)
+        qc.h(qubit)
+
+def backward_transform(qc, qubit, p):
+    if p == 'X':
+        qc.h(qubit)
+    elif p == 'Y':
+        qc.h(qubit)
+        qc.s(qubit)
+
+def apply_two_qubit_rotation(qc, A, B, i, j, theta):
+    forward_transform(qc, i, A)
+    forward_transform(qc, j, B)
+    qc.cx(i, j)
+    qc.rz(2 * theta, j)
+    qc.cx(i, j)
+    backward_transform(qc, j, B)
+    backward_transform(qc, i, A)
+
+def build_circuit(qc, ops_info, thetas):
+    for theta, op_info in zip(thetas, ops_info):
+        if len(op_info) == 2:
+            q, P = op_info
+            if P == 'X':
+                qc.rx(2 * theta, q)
+            elif P == 'Y':
+                qc.ry(2 * theta, q)
+            elif P == 'Z':
+                qc.rz(2 * theta, q)
+        elif len(op_info) == 3:
+            i, j, AB = op_info
+            A, B = AB[0], AB[1]
+            apply_two_qubit_rotation(qc, A, B, i, j, theta)
+
+def state_from_ops_thetas(ops, thetas, n_qubits):
+    state = initial_state(n_qubits)
+    for theta, op in zip(thetas, ops):
+        state = apply_unitary(state, op, theta)
+    return state
+
+def run_vqe_with_iterations(weighted_edge_list, n_qubits, coeff_zz, coeff_x, gradient_threshold=1e-5, convergence_tol=1e-7):
+    start_time = time.time()
+
+    # Build Hamiltonian on GPU if available
+    hamiltonian = build_hamiltonian_matrix(weighted_edge_list, n_qubits, coeff_zz, coeff_x)
+    eigenvalues, eigenvectors = eigh(cp.asnumpy(hamiltonian))  # Use NumPy for diagonalization
+    exact_ground_state_energy = np.min(eigenvalues)
+    exact_ground_state = cp.array(eigenvectors[:, np.argmin(eigenvalues)], dtype=complex)
+
+    # Build operator pools
+    single_qubit_ops, two_qubit_ops = build_operator_pool(weighted_edge_list, n_qubits)
+
+    # Initialize ansatz
+    combined_ops = []
+    combined_info = []
+    combined_thetas = cp.array([], dtype=float)
+
+    prev_energy = cp.inf
+    iteration = 0
+
+    while True:
+        iteration += 1
+        print(f"\n--- Iteration {iteration} ---")
+
+        # Compute current state
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+
+        # Step 1: Select and add two-qubit operators
+        selected_two_qubit = filter_operators_by_gradient(state, hamiltonian, two_qubit_ops, gradient_threshold=gradient_threshold)
+        if selected_two_qubit:
+            print("Selected two-qubit operators:")
+            for op, idx, g in selected_two_qubit:
+                print(f"  Operator {idx}, gradient: {g:.6f}")
+
+            selected_two_qubit_ops = [op for (op, idx, g) in selected_two_qubit]
+            selected_two_qubit_info = [idx for (op, idx, g) in selected_two_qubit]
+            combined_ops.extend(selected_two_qubit_ops)
+            combined_info.extend(selected_two_qubit_info)
+
+            new_angles = cp.array([cp.random.uniform(-cp.pi, cp.pi) for _ in selected_two_qubit_ops], dtype=float)
+            if combined_thetas.size == 0:
+                initial_thetas = new_angles
+            else:
+                # Ensure both arrays are CuPy explicitly
+                initial_thetas = cp.concatenate([cp.asarray(combined_thetas), cp.asarray(new_angles)])
+
+            # Perform GPU-based optimization
+            combined_thetas = perform_gpu_optimization(combined_ops, hamiltonian, n_qubits, initial_thetas)
+
+            state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+            energy = energy_expectation(state, hamiltonian)
+            fidelity = abs(cp.vdot(state, exact_ground_state))**2
+            print(f"After two-qubit selection optimization:")
+            print(f"Energy: {energy:.5f}, Fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+        else:
+            print("No two-qubit operators above threshold this iteration.")
+
+        # Step 2: Select and add single-qubit operators
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+        selected_single_qubit = filter_operators_by_gradient(state, hamiltonian, single_qubit_ops, gradient_threshold=gradient_threshold)
+        if selected_single_qubit:
+            print("Selected single-qubit operators:")
+            for op, idx, g in selected_single_qubit:
+                print(f"  Operator {idx}, gradient: {g:.6f}")
+
+            selected_single_qubit_ops = [op for (op, idx, g) in selected_single_qubit]
+            selected_single_qubit_info = [idx for (op, idx, g) in selected_single_qubit]
+            combined_ops.extend(selected_single_qubit_ops)
+            combined_info.extend(selected_single_qubit_info)
+
+            new_angles = cp.array([cp.random.uniform(-cp.pi, cp.pi) for _ in selected_single_qubit_ops], dtype=float)
+            if combined_thetas.size == 0:
+                initial_thetas = new_angles
+            else:
+                # Ensure both arrays are CuPy explicitly
+                initial_thetas = cp.concatenate([cp.asarray(combined_thetas), cp.asarray(new_angles)])
+
+            # Perform GPU-based optimization
+            combined_thetas = perform_gpu_optimization(combined_ops, hamiltonian, n_qubits, initial_thetas)
+
+            state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+            energy = energy_expectation(state, hamiltonian)
+            fidelity = abs(cp.vdot(state, exact_ground_state))**2
+            print(f"After single-qubit selection optimization:")
+            print(f"Energy: {energy:.5f}, Fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+        else:
+            print("No single-qubit operators above threshold this iteration.")
+
+        # Final circuit using parameters from two- and single-qubit optimizations
+        qc_final = QuantumCircuit(n_qubits)
+        build_circuit(qc_final, combined_info, cp.asnumpy(combined_thetas))  # Use all operators and their optimized parameters
+        print("\nFinal circuit after single- and two-qubit optimizations:")
+        display(qc_final.draw('mpl'))
+
+        # Compute final energy using the frozen parameters
+        state = state_from_ops_thetas(combined_ops, combined_thetas, n_qubits)
+        energy = energy_expectation(state, hamiltonian)
+        fidelity = abs(cp.vdot(state, exact_ground_state))**2
+        print(f"Final energy: {energy:.5f}")
+        print(f"Final fidelity: {fidelity:.3f}, Energy error: {abs(energy - exact_ground_state_energy):.5f}")
+
+
+        # Build and display circuit
+        #qc = QuantumCircuit(n_qubits)
+        #build_circuit(qc, combined_info, cp.asnumpy(combined_thetas))  # Use NumPy for circuit angles
+        #display(qc.draw('mpl'))
+        ansatz = transpile(qc_final, basis_gates=['u', 'cx'])
+        print("Transpile Depth =", ansatz.depth())
+        print(ansatz.count_ops())
+        print("\n============********===============")
+        # Count single- and two-qubit gate parameters
+        single_qubit_params = 0
+        two_qubit_params = 0
+        
+        for gate, qargs, _ in qc_final.data:
+            if len(qargs) == 1:  # Single-qubit gate
+                single_qubit_params += len(gate.params)
+            elif len(qargs) == 2:  # Two-qubit gate
+                two_qubit_params += len(gate.params)
+
+        # Print the results
+        print(f"Total single-qubit gate parameters: {single_qubit_params}")
+        print(f"Total two-qubit gate parameters: {two_qubit_params}")
+        # Check convergence
+        if abs(energy - prev_energy) < convergence_tol:
+            print(f"Converged at iteration {iteration}, energy: {energy:.5f}")
+            break
+
+        # Stop if no new operators are added
+        if len(selected_two_qubit) == 0 and len(selected_single_qubit) == 0:
+            print("No new operators added and no improvement, stopping.")
+            break
+
+        prev_energy = energy
+
+    end_time = time.time()
+    print(f"Total running time: {end_time - start_time:.4f} seconds")
+
+
+
+# Example usage
+coeff_zz = float(input("Enter coefficient for ZZ terms: "))
+coeff_x = float(input("Enter coefficient for X terms: "))
+
+weighted_edge_list = [ (0, 1, 1),
+          (1,2,1) ,(1,8,1),
+         (2,3,1),(2,9,1),(2,8,1),
+         (3,4,1),(3,9,1),
+         (4,9,1),(4,5,1),
+         (5,9,1),(5,6,1),
+         (8,6,1),(6,9,1),(6,7,1),
+         (7,8,1),(9,8,1) ,(0,7,1) ,(0,8,1),
+
+]
+
+n_qubits = 10
+run_vqe_with_iterations(weighted_edge_list, n_qubits, coeff_zz, coeff_x, gradient_threshold=1e-4, convergence_tol=1e-5)
